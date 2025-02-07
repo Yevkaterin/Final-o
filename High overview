@@ -1,0 +1,46 @@
+1. Source Components and Initial Trigger:
+
+S3 source bucket for PDF uploads
+S3 event trigger on PDF upload
+IAM role for Lambda with necessary permissions
+
+
+2. Processing Components:
+
+Lambda function that will:
+
+Read the PDF text content
+Interface with Amazon Polly to convert text to speech
+Save the resulting MP3 to destination bucket
+
+
+Amazon Polly configuration for text-to-speech conversion
+
+
+3. Destination and Notification:
+
+S3 destination bucket for MP3 files
+S3 event trigger on MP3 creation
+SNS topic for email notifications
+IAM permissions for S3 to publish to SNS
+
+
+4. Data Flow:
+
+User uploads PDF to source bucket
+Upload triggers Lambda function
+Lambda reads PDF and extracts text
+Lambda calls Polly to convert text to speech
+Lambda saves MP3 to destination bucket
+MP3 creation triggers SNS notification
+User receives email with direct link to MP3
+
+
+5. Key Considerations:
+
+PDF text extraction method
+Polly voice selection and language settings
+MP3 file naming convention
+S3 presigned URL generation for the email link
+Error handling and retry mechanisms
+Lambda timeout settings (for large documents)
