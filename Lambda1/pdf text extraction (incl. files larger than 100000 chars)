@@ -1,0 +1,116 @@
+import json
+import boto3
+import PyPDF2
+from io import BytesIO
+import os
+
+def lambda_handler(event, context):
+    # Initialize AWS clients
+    s3 = boto3.client('s3')
+    lambda_client = boto3.client('lambda')
+    
+    try:
+        # Get the source bucket and file key from the event
+        source_bucket = event['Records'][0]['s3']['bucket']['name']
+        pdf_key = event['Records'][0]['s3']['object']['key']
+        
+        # Get the PDF file from S3
+        response = s3.get_object(Bucket=source_bucket, Key=pdf_key)
+        pdf_file = BytesIO(response['Body'].read())
+        
+        # Extract text from PDF
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text_content = ""
+        
+        # Iterate through all pages and extract text
+        for page in pdf_reader.pages:
+            text_content += page.extract_text()
+            
+        # Clean and prepare text for Polly
+        text_content = clean_text(text_content)
+        
+        # Split text into chunks
+        chunks = split_into_chunks(text_content)
+        
+        # Store chunks in S3 for processing
+        text_chunks_prefix = f"text-chunks/{os.path.splitext(pdf_key)[0]}"
+        chunk_locations = []
+        
+        for i, chunk in enumerate(chunks):
+            chunk_key = f"{text_chunks_prefix}/chunk_{i}.txt"
+            s3.put_object(
+                Bucket=os.environ['PROCESSING_BUCKET'],
+                Key=chunk_key,
+                Body=chunk.encode('utf-8'),
+                ContentType='text/plain'
+            )
+            chunk_locations.append(chunk_key)
+        
+        # Invoke text-to-speech Lambda with chunk information
+        lambda_client.invoke(
+            FunctionName=os.environ['TEXT_TO_SPEECH_LAMBDA'],
+            InvocationType='Event',
+            Payload=json.dumps({
+                'chunk_locations': chunk_locations,
+                'original_pdf_key': pdf_key,
+                'processing_bucket': os.environ['PROCESSING_BUCKET']
+            })
+        )
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'PDF processed successfully',
+                'chunks_created': len(chunks),
+                'original_file': pdf_key
+            })
+        }
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        raise e
+
+def clean_text(text):
+    """
+    Clean and prepare text for Polly conversion
+    """
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+    
+    # Remove any special characters that might cause issues
+    replacements = {
+        '\u2018': "'",  # Left single quotation mark
+        '\u2019': "'",  # Right single quotation mark
+        '\u201c': '"',  # Left double quotation mark
+        '\u201d': '"',  # Right double quotation mark
+        '\u2013': '-',  # En dash
+        '\u2014': '-',  # Em dash
+    }
+    
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    
+    return text
+
+def split_into_chunks(text, max_chars=90000):
+    """
+    Split text into chunks, trying to break at sentence endings
+    """
+    chunks = []
+    current_chunk = ""
+    sentences = text.split('. ')
+    
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) + 2 <= max_chars:
+            current_chunk += sentence + '. '
+        else:
+            # Add current chunk if it's not empty
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence + '. '
+            
+    # Add the last chunk if it's not empty
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+        
+    return chunks
