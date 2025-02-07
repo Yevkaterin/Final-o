@@ -1,0 +1,92 @@
+import json
+import boto3
+import os
+from pydub import AudioSegment
+import tempfile
+
+def lambda_handler(event, context):
+    # Initialize AWS clients
+    s3 = boto3.client('s3')
+    polly = boto3.client('polly')
+    
+    try:
+        # Get chunk information from event
+        chunk_locations = event['chunk_locations']
+        original_pdf_key = event['original_pdf_key']
+        processing_bucket = event['processing_bucket']
+        
+        # Create temporary directory for audio files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_files = []
+            
+            # Process each text chunk
+            for i, chunk_location in enumerate(chunk_locations):
+                # Get chunk text from S3
+                response = s3.get_object(
+                    Bucket=processing_bucket,
+                    Key=chunk_location
+                )
+                chunk_text = response['Body'].read().decode('utf-8')
+                
+                # Convert chunk to speech
+                polly_response = polly.synthesize_speech(
+                    Text=chunk_text,
+                    OutputFormat='mp3',
+                    VoiceId='Joanna'
+                )
+                
+                # Save chunk to temporary file
+                chunk_file = os.path.join(temp_dir, f'chunk_{i}.mp3')
+                with open(chunk_file, 'wb') as f:
+                    f.write(polly_response['AudioStream'].read())
+                audio_files.append(chunk_file)
+            
+            # Combine audio files
+            combined_audio = combine_audio_files(audio_files)
+            final_audio_path = os.path.join(temp_dir, 'final_audio.mp3')
+            combined_audio.export(final_audio_path, format='mp3')
+            
+            # Generate the MP3 filename (same as PDF but with .mp3 extension)
+            mp3_key = os.path.splitext(original_pdf_key)[0] + '.mp3'
+            
+            # Upload final audio to destination bucket
+            destination_bucket = os.environ['DESTINATION_BUCKET']
+            s3.upload_file(
+                final_audio_path,
+                destination_bucket,
+                mp3_key,
+                ExtraArgs={'ContentType': 'audio/mpeg'}
+            )
+            
+            # Clean up text chunks
+            for chunk_location in chunk_locations:
+                s3.delete_object(
+                    Bucket=processing_bucket,
+                    Key=chunk_location
+                )
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'Text-to-speech conversion completed',
+                'source_pdf': original_pdf_key,
+                'destination_file': mp3_key,
+                'chunks_processed': len(chunk_locations)
+            })
+        }
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        raise e
+
+def combine_audio_files(audio_files):
+    """
+    Combine multiple MP3 files into a single audio file
+    """
+    combined = AudioSegment.from_mp3(audio_files[0])
+    
+    for audio_file in audio_files[1:]:
+        audio_segment = AudioSegment.from_mp3(audio_file)
+        combined += audio_segment
+        
+    return combined
