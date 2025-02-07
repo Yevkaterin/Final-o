@@ -1,0 +1,52 @@
+Key changes in this split architecture:
+
+First Lambda (PDF Processor):
+
+Triggered by PDF upload to source bucket
+Extracts and cleans text from PDF
+Splits text into chunks
+Stores chunks in a processing bucket
+Triggers second Lambda
+
+
+Second Lambda (Text-to-Speech):
+
+Triggered by first Lambda
+Processes text chunks with Polly
+Combines audio segments
+Uploads final MP3 to destination bucket
+Cleans up temporary text chunks
+
+
+Environment Variables Needed:
+For PDF Processor Lambda:
+
+PROCESSING_BUCKET: Bucket for temporary text chunks
+TEXT_TO_SPEECH_LAMBDA: ARN of second Lambda
+
+For Text-to-Speech Lambda:
+
+DESTINATION_BUCKET: Bucket for final MP3 files
+
+
+Additional IAM Permissions:
+For PDF Processor Lambda:
+
+lambda:InvokeFunction for second Lambda
+s3:PutObject for processing bucket
+
+For Text-to-Speech Lambda:
+
+s3:GetObject for processing bucket
+s3:DeleteObject for processing bucket
+s3:PutObject for destination bucket
+polly:SynthesizeSpeech
+
+
+
+This separation provides several benefits:
+
+Better separation of concerns
+Easier monitoring and debugging
+More focused error handling
+Independent scaling of resources
